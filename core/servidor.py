@@ -2,11 +2,28 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from groq import Groq
 from supabase import create_client
-import os, sys, datetime, httpx, random, hashlib, numpy as np
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from dotenv import load_dotenv
+import os, sys, datetime, httpx, random, hashlib, numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'config'))
-from config import *
+load_dotenv()
+
+GROQ_API_KEY           = os.getenv("GROQ_API_KEY")
+MODELO                 = "llama-3.3-70b-versatile"
+MAX_TOKENS             = int(os.getenv("MAX_TOKENS", 80))
+TEMPERATURE            = float(os.getenv("TEMPERATURE", 0.85))
+SUPABASE_URL           = os.getenv("SUPABASE_URL")
+SUPABASE_KEY           = os.getenv("SUPABASE_KEY")
+OVERLAY_URL            = os.getenv("OVERLAY_URL", "http://127.0.0.1:3000")
+TEMPO_PROATIVO_MINUTOS = int(os.getenv("TEMPO_PROATIVO_MINUTOS", 5))
+BASE_DIR               = os.path.dirname(os.path.abspath(__file__))
+PERFIL_PATH            = os.path.join(BASE_DIR, "perfil.md")
+SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT")
+
+if not GROQ_API_KEY:
+    raise RuntimeError("GROQ_API_KEY não encontrada no ambiente/.env")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("SUPABASE_URL/SUPABASE_KEY não encontradas no ambiente/.env")
 
 app = FastAPI()
 
