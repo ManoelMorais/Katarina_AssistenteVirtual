@@ -34,8 +34,15 @@ historicos  = {}
 
 # ─── Perfil ──────────────────────────────────────────────────────
 def carregar_perfil():
-    with open(PERFIL_PATH, "r", encoding="utf-8") as f:
-        return f.read()
+    perfil = os.getenv("PERFIL_CONTEUDO")
+    if perfil:
+        return perfil
+    # fallback local
+    try:
+        with open(PERFIL_PATH, "r", encoding="utf-8") as f:
+            return f.read()
+    except:
+        return "Perfil não encontrado."
 
 perfil = carregar_perfil()
 
