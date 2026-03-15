@@ -3,7 +3,7 @@ const axios = require('axios')
 
 // ─── Config ──────────────────────────────────────────────────────
 const TELEGRAM_TOKEN = '8136697218:AAFtbWwm2LTkNr-PmRi3zwXIQP5Al6kG8hY'  // token do BotFather
-const SERVIDOR_URL   = 'http://localhost:8000/conversar'
+const SERVIDOR_URL = 'https://katarinaassistentevirtual-production.up.railway.app/conversar'
 
 // ─── Aguarda servidor subir ──────────────────────────────────────
 async function aguardarServidor(tentativas = 10, intervalo = 3000) {
