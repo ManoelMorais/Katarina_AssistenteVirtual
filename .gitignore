@@ -1,0 +1,30 @@
+# Variáveis de ambiente — NUNCA subir isso
+.env
+config/config.py
+
+# Memória local
+memoria/
+perfil.md
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+
+# Node
+node_modules/
+package-lock.json
+
+# Electron
+.wwebjs_auth/
+.wwebjs_cache/
+auth/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/

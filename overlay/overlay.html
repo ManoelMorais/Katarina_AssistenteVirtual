@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body {
+  background: transparent;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+  user-select: none;
+  -webkit-user-select: none;
+}
+#container {
+  position: absolute;
+  bottom: 20px;
+  left: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  transform: translateX(-110px);
+  transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+#container.visivel { transform: translateX(0px); }
+#container.saindo {
+  transform: translateX(-110px);
+  transition: transform 0.4s ease-in;
+}
+#balao {
+  background: rgba(20, 10, 40, 0.92);
+  border: 2px solid #9b6fd4;
+  border-radius: 14px 14px 14px 3px;
+  padding: 8px 12px;
+  font-size: 14px;
+  color: #f0e6ff;
+  width: fit-content;
+  max-width: 240px;
+  max-height: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-family: 'Courier New', monospace;
+  line-height: 1.4;
+  word-wrap: break-word;
+  word-break: break-word;
+  white-space: pre-wrap;
+  pointer-events: none;
+  margin-bottom: 6px;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  scrollbar-width: thin;
+  scrollbar-color: #9b6fd4 transparent;
+}
+#balao.visivel { opacity: 1; transform: translateY(0); }
+#kat {
+  width: 80px;
+  height: 100px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-4px); }
+}
+@keyframes bounce-in {
+  0%   { transform: translateY(16px) scale(0.9); }
+  60%  { transform: translateY(-6px) scale(1.05); }
+  80%  { transform: translateY(3px) scale(0.98); }
+  100% { transform: translateY(0px) scale(1); }
+}
+@keyframes headbob {
+  0%, 100% { transform: rotate(0deg); }
+  25%       { transform: rotate(-3deg); }
+  75%       { transform: rotate(3deg); }
+}
+@keyframes wave {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  30%       { transform: translateY(-6px) rotate(-5deg); }
+  60%       { transform: translateY(-3px) rotate(3deg); }
+}
+.anim-float   { animation: float 2.5s ease-in-out infinite; }
+.anim-bounce  { animation: bounce-in 0.5s ease forwards; }
+.anim-headbob { animation: headbob 0.6s ease-in-out 3; }
+.anim-wave    { animation: wave 0.8s ease-in-out 2; }
+</style>
+</head>
+<body>
+<div id="container">
+  <div id="balao"></div>
+  <img id="kat"/>
+</div>
+<script>
+const { ipcRenderer } = require('electron')
+const path = require('path')
+const ASSETS = path.join(__dirname, 'assets') + path.sep
+const imgs = {
+  idle:      ASSETS + 'kat_idle.gif',
+  walk:      ASSETS + 'kat_walk.gif',
+  ouve:      ASSETS + 'kat_ouve.gif',
+  neutra:    ASSETS + 'kat_expr_neutra.png',
+  falando:   ASSETS + 'kat_expr_falando.png',
+  seria:     ASSETS + 'kat_expr_seria.png',
+  feliz:     ASSETS + 'kat_expr_feliz.png',
+  brava:     ASSETS + 'kat_expr_brava.png',
+  ironica:   ASSETS + 'kat_expr_ironica.png',
+  surpresa:  ASSETS + 'kat_expr_surpresa.png',
+  pensativa: ASSETS + 'kat_expr_pensativa.png',
+}
+const gestos_idle = [
+  { img: 'feliz',     anim: 'anim-wave',    dur: 2000 },
+  { img: 'ironica',   anim: 'anim-headbob', dur: 1800 },
+  { img: 'pensativa', anim: 'anim-float',   dur: 3000 },
+  { img: 'surpresa',  anim: 'anim-bounce',  dur: 1500 },
+  { img: 'neutra',    anim: 'anim-float',   dur: 2500 },
+]
+const container = document.getElementById('container')
+const balao     = document.getElementById('balao')
+const kat       = document.getElementById('kat')
+const TEMPO_SUMIR = 20000
+const TEMPO_GESTO = 6000
+let imgAtual    = ''
+let visivel     = false
+let emInteracao = false
+let timerSumir  = null
+let timerGesto  = null
+
+function setImg(src) {
+  if (imgAtual === src) return
+  imgAtual = src
+  kat.src = src
+}
+function setAnim(anim) {
+  kat.className = ''
+  void kat.offsetWidth
+  if (anim) kat.classList.add(anim)
+}
+function mostrarBalao(texto) {
+  balao.textContent = texto
+  balao.classList.add('visivel')
+  setTimeout(() => { balao.scrollTop = balao.scrollHeight }, 100)
+}
+function esconderBalao() {
+  balao.classList.remove('visivel')
+}
+function aparecer(expr, callback) {
+  if (visivel) {
+    setImg(imgs[expr] || imgs.neutra)
+    setAnim('anim-bounce')
+    setTimeout(() => setAnim('anim-float'), 500)
+    if (callback) callback()
+    resetarTimerSumir()
+    return
+  }
+  visivel = true
+  setImg(imgs.walk)
+  setAnim('')
+  container.classList.remove('saindo')
+  container.classList.add('visivel')
+  setTimeout(() => {
+    setImg(imgs[expr] || imgs.neutra)
+    setAnim('anim-bounce')
+    setTimeout(() => {
+      setAnim('anim-float')
+      if (callback) callback()
+    }, 500)
+  }, 600)
+  resetarTimerSumir()
+}
+function sumir() {
+  if (!visivel) return
+  visivel = false
+  emInteracao = false
+  pararGestos()
+  esconderBalao()
+  container.classList.remove('visivel')
+  container.classList.add('saindo')
+  setTimeout(() => {
+    container.classList.remove('saindo')
+    setImg(imgs.neutra)
+    setAnim('')
+  }, 450)
+}
+function resetarTimerSumir() {
+  if (timerSumir) clearTimeout(timerSumir)
+  timerSumir = setTimeout(sumir, TEMPO_SUMIR)
+}
+function gestoAleatorio() {
+  if (!visivel || emInteracao) return
+  const g = gestos_idle[Math.floor(Math.random() * gestos_idle.length)]
+  setImg(imgs[g.img])
+  setAnim(g.anim)
+  setTimeout(() => {
+    if (!emInteracao && visivel) {
+      setImg(imgs.neutra)
+      setAnim('anim-float')
+    }
+  }, g.dur)
+}
+function iniciarGestos() {
+  pararGestos()
+  timerGesto = setInterval(gestoAleatorio, TEMPO_GESTO)
+}
+function pararGestos() {
+  if (timerGesto) clearInterval(timerGesto)
+  timerGesto = null
+}
+ipcRenderer.on('katarina-fala', (event, dados) => {
+  emInteracao = true
+  pararGestos()
+  const expr = dados.expressao || 'falando'
+  aparecer(expr, () => {
+    setImg(imgs[expr] || imgs.falando)
+    mostrarBalao(dados.texto)
+  })
+  const tempo = Math.max(5000, dados.texto.length * 55)
+  setTimeout(() => {
+    emInteracao = false
+    esconderBalao()
+    setImg(imgs.neutra)
+    setAnim('anim-float')
+    resetarTimerSumir()
+    iniciarGestos()
+  }, tempo)
+})
+ipcRenderer.on('katarina-ouve', () => {
+  emInteracao = true
+  pararGestos()
+  aparecer('seria', () => {
+    setImg(imgs.seria)
+    esconderBalao()
+  })
+})
+ipcRenderer.on('katarina-idle', () => {
+  emInteracao = false
+  setImg(imgs.neutra)
+  setAnim('anim-float')
+  esconderBalao()
+  resetarTimerSumir()
+  iniciarGestos()
+})
+setImg(imgs.neutra)
+</script>
+</body>
+</html>
