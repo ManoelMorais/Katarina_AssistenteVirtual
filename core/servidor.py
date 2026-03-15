@@ -2,22 +2,18 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from groq import Groq
 from supabase import create_client
-from sentence_transformers import SentenceTransformer
-import os, sys, datetime, httpx, random
+import os, sys, datetime, httpx, random, hashlib, numpy as np
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# ─── Config ──────────────────────────────────────────────────────
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'config'))
 from config import *
 
 app = FastAPI()
 
-# ─── Clientes ────────────────────────────────────────────────────
-groq_client    = Groq(api_key=GROQ_API_KEY)
-supabase       = create_client(SUPABASE_URL, SUPABASE_KEY)
-encoder        = SentenceTransformer('all-MiniLM-L6-v2')
-scheduler      = AsyncIOScheduler()
-historicos     = {}
+groq_client = Groq(api_key=GROQ_API_KEY)
+supabase    = create_client(SUPABASE_URL, SUPABASE_KEY)
+scheduler   = AsyncIOScheduler()
+historicos  = {}
 
 # ─── Perfil ──────────────────────────────────────────────────────
 def carregar_perfil():
@@ -26,20 +22,38 @@ def carregar_perfil():
 
 perfil = carregar_perfil()
 
+# ─── Embedding leve (sem pytorch) ────────────────────────────────
+def gerar_embedding(texto: str) -> list:
+    # Embedding simples baseado em hash — leve, sem dependências pesadas
+    # Suficiente pra busca semântica básica no Supabase
+    tokens = texto.lower().split()
+    vec = np.zeros(384)
+    for i, token in enumerate(tokens[:384]):
+        h = int(hashlib.md5(token.encode()).hexdigest(), 16)
+        idx = h % 384
+        vec[idx] += 1.0 / (i + 1)
+    norm = np.linalg.norm(vec)
+    if norm > 0:
+        vec = vec / norm
+    return vec.tolist()
+
 # ─── Memória ─────────────────────────────────────────────────────
 def salvar_memoria(sessao_id: str, role: str, texto: str):
-    embedding = encoder.encode(texto).tolist()
-    supabase.table("memorias").insert({
-        "sessao_id": sessao_id,
-        "role": role,
-        "texto": f"[{role.upper()}] {texto}",
-        "embedding": embedding,
-        "timestamp": datetime.datetime.now().isoformat()
-    }).execute()
+    try:
+        embedding = gerar_embedding(texto)
+        supabase.table("memorias").insert({
+            "sessao_id": sessao_id,
+            "role": role,
+            "texto": f"[{role.upper()}] {texto}",
+            "embedding": embedding,
+            "timestamp": datetime.datetime.now().isoformat()
+        }).execute()
+    except Exception as e:
+        print(f"Erro ao salvar memória: {e}")
 
 def buscar_memorias(sessao_id: str, texto: str, n: int = 5) -> str:
     try:
-        embedding = encoder.encode(texto).tolist()
+        embedding = gerar_embedding(texto)
         result = supabase.rpc("buscar_memorias", {
             "query_embedding": embedding,
             "match_count": n,
@@ -54,17 +68,17 @@ def buscar_memorias(sessao_id: str, texto: str, n: int = 5) -> str:
 # ─── Expressão ───────────────────────────────────────────────────
 def classificar_expressao(texto: str) -> str:
     t = texto.lower()
-    if any(p in t for p in ["sério isso", "lá vem você", "kk", "kkk", "ironi"]):
+    if any(p in t for p in ["sério isso", "lá vem você", "kk", "kkk"]):
         return "ironica"
-    if any(p in t for p in ["que ótimo", "feliz", "massa", "show"]):
+    if any(p in t for p in ["ótimo", "feliz", "massa", "show"]):
         return "feliz"
-    if any(p in t for p in ["não concordo", "errado", "problema", "cuidado"]):
+    if any(p in t for p in ["errado", "problema", "cuidado"]):
         return "brava"
-    if any(p in t for p in ["como assim", "espera", "sério?", "nossa"]):
+    if any(p in t for p in ["como assim", "espera", "nossa"]):
         return "surpresa"
-    if any(p in t for p in ["pensando", "talvez", "não sei", "difícil"]):
+    if any(p in t for p in ["talvez", "não sei", "difícil"]):
         return "pensativa"
-    if any(p in t for p in ["entendo", "tô aqui", "pode falar", "ouço"]):
+    if any(p in t for p in ["entendo", "tô aqui", "ouço"]):
         return "seria"
     return "falando"
 
@@ -84,7 +98,7 @@ async def avisar_overlay(evento: str, texto: str = "", expressao: str = "falando
 system_prompt = f"{SYSTEM_PROMPT}\n\nO perfil dele:\n---\n{perfil}\n---"
 
 # ─── Proativo ────────────────────────────────────────────────────
-mensagens_proativas = [
+msgs_proativas = [
     ("Ei, tô aqui. Sumiu.", "ironica"),
     ("Tô te observando.", "seria"),
     ("Oi. Só passando.", "feliz"),
@@ -94,16 +108,15 @@ mensagens_proativas = [
 ]
 
 async def aparicao_proativa():
-    texto, expressao = random.choice(mensagens_proativas)
+    texto, expressao = random.choice(msgs_proativas)
     await avisar_overlay("fala", texto, expressao)
 
-# ─── Startup ─────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
     scheduler.add_job(aparicao_proativa, 'interval', minutes=TEMPO_PROATIVO_MINUTOS)
     scheduler.start()
 
-# ─── Endpoint ────────────────────────────────────────────────────
+# ─── Endpoints ───────────────────────────────────────────────────
 class Mensagem(BaseModel):
     sessao_id: str
     texto: str
@@ -118,21 +131,18 @@ async def conversar(msg: Mensagem):
     if sessao_id not in historicos:
         historicos[sessao_id] = [{"role": "system", "content": system_prompt}]
 
-    historico        = historicos[sessao_id]
-    memorias         = buscar_memorias(sessao_id, texto)
-    historico_mem    = list(historico)
+    historico = historicos[sessao_id]
+    memorias  = buscar_memorias(sessao_id, texto)
+    hist_mem  = list(historico)
 
     if memorias:
-        historico_mem.append({
-            "role": "system",
-            "content": f"Memórias relevantes:\n{memorias}"
-        })
+        hist_mem.append({"role": "system", "content": f"Memórias relevantes:\n{memorias}"})
 
-    historico_mem.append({"role": "user", "content": texto})
+    hist_mem.append({"role": "user", "content": texto})
 
     resposta = groq_client.chat.completions.create(
         model=MODELO,
-        messages=historico_mem,
+        messages=hist_mem,
         max_tokens=MAX_TOKENS,
         temperature=TEMPERATURE
     )
@@ -150,5 +160,8 @@ async def conversar(msg: Mensagem):
 
 @app.get("/")
 async def status():
-    count = supabase.table("memorias").select("id", count="exact").execute()
-    return {"status": "Katarina online", "memoria": count.count}
+    try:
+        count = supabase.table("memorias").select("id", count="exact").execute()
+        return {"status": "Katarina online", "memoria": count.count}
+    except Exception:
+        return {"status": "Katarina online"}

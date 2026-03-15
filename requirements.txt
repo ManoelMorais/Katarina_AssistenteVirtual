@@ -2,7 +2,7 @@ fastapi
 uvicorn
 groq
 supabase
-sentence-transformers
 httpx
 apscheduler
 python-dotenv
+numpy
