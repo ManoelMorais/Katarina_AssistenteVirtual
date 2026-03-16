@@ -19,6 +19,7 @@ TEMPERATURE = float(os.getenv("TEMPERATURE", 0.85))
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 OVERLAY_URL = os.getenv("OVERLAY_URL", "http://127.0.0.1:3000")
+VOZ_URL     = os.getenv("VOZ_URL",     "http://127.0.0.1:8001/falar")
 TEMPO_PROATIVO_MINUTOS = int(os.getenv("TEMPO_PROATIVO_MINUTOS", 5))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PERFIL_PATH = os.path.join(BASE_DIR, "perfil.md")
@@ -131,6 +132,19 @@ async def avisar_overlay(evento: str, texto: str = "", expressao: str = "falando
         pass
 
 
+async def falar_por_voz(texto: str):
+    """
+    Pede ao voz.py para sintetizar e reproduzir o audio.
+    Se o voz.py nao estiver rodando, anima apenas o overlay.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as c:
+            await c.post(VOZ_URL, json={"texto": texto})
+    except Exception:
+        expressao = classificar_expressao(texto)
+        await avisar_overlay("fala", texto, expressao)
+
+
 # ─── System prompt base ───────────────────────────────────────────────────────
 system_prompt_base = f"{SYSTEM_PROMPT}\n\nO perfil dele:\n---\n{perfil}\n---"
 
@@ -159,8 +173,8 @@ msgs_proativas = [
 
 
 async def aparicao_proativa():
-    texto, expressao = random.choice(msgs_proativas)
-    await avisar_overlay("fala", texto, expressao)
+    texto, _ = random.choice(msgs_proativas)
+    await falar_por_voz(texto)
 
 
 # ─── Startup ──────────────────────────────────────────────────────────────────
@@ -171,14 +185,9 @@ async def startup():
     scheduler.start()
 
     # ── Fase 4 — callbacks de voz da Katarina ────────────────────────────────
-    async def falar_overlay(texto: str):
-        """Callback usado pelo ScreenReader para comentários e alertas por voz."""
-        expressao = classificar_expressao(texto)
-        await avisar_overlay("fala", texto, expressao)
-
     def falar_sync(texto: str):
-        """Wrapper síncrono para o asyncio.create_task funcionar no callback."""
-        asyncio.create_task(falar_overlay(texto))
+        """Pede ao voz.py para falar — audio real + overlay sincronizado."""
+        asyncio.create_task(falar_por_voz(texto))
 
     # Sobe o ScreenReader como task paralela — não bloqueia o servidor
     reader = ScreenReader(
