@@ -15,4 +15,6 @@ timeout /t 2 /nobreak > nul
 
 start "Telegram" cmd /k "cd /d "%~dp0interfaces" && node telegram.js"
 
+start "Voz" cmd /k "cd /d "%~dp0core" && python voz.py"
+
 exit

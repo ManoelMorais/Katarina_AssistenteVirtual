@@ -213,15 +213,12 @@ ipcRenderer.on('katarina-fala', (event, dados) => {
     setImg(imgs[expr] || imgs.falando)
     mostrarBalao(dados.texto)
   })
-  const tempo = Math.max(5000, dados.texto.length * 55)
-  setTimeout(() => {
-    emInteracao = false
-    esconderBalao()
-    setImg(imgs.neutra)
-    setAnim('anim-float')
-    resetarTimerSumir()
-    iniciarGestos()
-  }, tempo)
+emInteracao = true
+pararGestos()
+aparecer(expr, () => {
+  setImg(imgs[expr] || imgs.falando)
+  mostrarBalao(dados.texto)
+})
 })
 ipcRenderer.on('katarina-ouve', () => {
   emInteracao = true
@@ -233,9 +230,9 @@ ipcRenderer.on('katarina-ouve', () => {
 })
 ipcRenderer.on('katarina-idle', () => {
   emInteracao = false
+  esconderBalao()          // ← adiciona essa linha
   setImg(imgs.neutra)
   setAnim('anim-float')
-  esconderBalao()
   resetarTimerSumir()
   iniciarGestos()
 })

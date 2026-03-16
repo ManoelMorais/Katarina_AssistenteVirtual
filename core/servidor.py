@@ -18,7 +18,7 @@ OVERLAY_URL            = os.getenv("OVERLAY_URL", "http://127.0.0.1:3000")
 TEMPO_PROATIVO_MINUTOS = int(os.getenv("TEMPO_PROATIVO_MINUTOS", 5))
 BASE_DIR               = os.path.dirname(os.path.abspath(__file__))
 PERFIL_PATH            = os.path.join(BASE_DIR, "perfil.md")
-SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT")
+SYSTEM_PROMPT          = os.getenv("SYSTEM_PROMPT")
 
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY não encontrada no ambiente/.env")
