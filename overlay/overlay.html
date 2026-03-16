@@ -239,6 +239,19 @@ ipcRenderer.on('katarina-idle', () => {
   iniciarGestos()
 })
 setImg(imgs.neutra)
+
+ipcRenderer.on('katarina-pausada', () => {
+  emInteracao = false
+  pararGestos()
+  esconderBalao()
+  setImg(imgs.neutra)
+  setAnim('')
+  // Mostra ícone de pausa no balão
+  balao.textContent = '[ pausada ]'
+  balao.classList.add('visivel')
+  if (timerSumir) clearTimeout(timerSumir)
+})
+
 </script>
 </body>
 </html>

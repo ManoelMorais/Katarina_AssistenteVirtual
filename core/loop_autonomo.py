@@ -1,3 +1,14 @@
+"""
+core/loop_autonomo.py
+Fase 5 — Loop autônomo da Katarina
+
+Roda como processo independente, paralelo ao servidor.py e voz.py.
+Monitora horário, tempo sem interação, tela e contexto para agir proativamente.
+
+Inicializado pelo iniciar.bat:
+  start "Loop" cmd /k "cd /d "%~dp0core" && python loop_autonomo.py"
+"""
+
 import os
 import time
 import datetime
@@ -9,6 +20,7 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.blocking import BlockingScheduler
 from groq import Groq
 from supabase import create_client
+import estado_global
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
@@ -282,6 +294,8 @@ def notificar_interacao():
 # ── Loop principal ────────────────────────────────────────────────────────────
 def tick():
     """Executado a cada INTERVALO_CHECK_PRINCIPAL minutos."""
+    if estado_global.esta_pausada():
+        return
     if not servidor_online():
         log.debug("Servidor offline, aguardando...")
         return

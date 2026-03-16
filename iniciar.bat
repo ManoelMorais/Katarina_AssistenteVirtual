@@ -22,4 +22,3 @@ timeout /t 3 /nobreak > nul
 start "Loop" cmd /k "cd /d "%~dp0core" && python loop_autonomo.py"
  
 exit
- 

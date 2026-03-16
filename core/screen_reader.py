@@ -25,11 +25,13 @@ import pytesseract
 from PIL import Image, ImageFilter
 
 from screen_context import ScreenContext
+import estado_global
 
 log = logging.getLogger("fase4")
 
 # ── Configurações ──────────────────────────────────────────────────────────────
-CAPTURE_INTERVAL      = 30    # segundos entre capturas periódicas
+CAPTURE_INTERVAL      = 60    # segundos entre capturas periódicas
+COMMENT_COOLDOWN      = 300   # segundos mínimos entre comentários (5 min)
 CHANGE_CHECK_INTERVAL = 2     # segundos entre checks de janela ativa
 MIN_TEXT_LENGTH       = 40    # descarta screenshots com pouco texto
 
@@ -246,9 +248,10 @@ class ScreenReader:
         self.monitor_index = monitor_index
         self.lang          = lang
 
-        self._last_hash   = ""
-        self._last_window = ""
-        self._running     = False
+        self._last_hash         = ""
+        self._last_window       = ""
+        self._running           = False
+        self._last_comment_time = 0.0   # epoch da última vez que comentou
 
     async def start(self):
         self._running = True
@@ -290,6 +293,10 @@ class ScreenReader:
 
         log.info(f"[{source}] {capture['window_title']!r} — {len(capture['clean_text'])} chars")
 
+        # Nao faz nada se Katarina estiver pausada
+        if estado_global.esta_pausada():
+            return
+
         # Atualiza contexto silencioso
         self.ctx.current_text   = capture["clean_text"]
         self.ctx.current_window = capture["window_title"]
@@ -311,10 +318,17 @@ class ScreenReader:
         action  = result.get("action", "silent")
         message = result.get("message", "")
 
+        import time as _time
         if action == "alert" and message:
             self.on_alert(message)
+            self._last_comment_time = _time.time()
         elif action == "comment" and message:
-            self.on_comment(message)
+            # Cooldown — nao comenta de novo se passou menos de COMMENT_COOLDOWN segundos
+            if _time.time() - self._last_comment_time >= COMMENT_COOLDOWN:
+                self.on_comment(message)
+                self._last_comment_time = _time.time()
+            else:
+                log.debug("Comentario ignorado — cooldown ativo")
         # "silent" → só atualiza contexto, não fala nada
 
         save_screen_capture(capture, action, message, self.supabase)
