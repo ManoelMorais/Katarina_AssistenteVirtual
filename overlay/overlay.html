@@ -145,27 +145,29 @@ function esconderBalao() {
 }
 function aparecer(expr, callback) {
   if (visivel) {
-    setImg(imgs[expr] || imgs.neutra)
-    setAnim('anim-bounce')
-    setTimeout(() => setAnim('anim-float'), 500)
-    if (callback) callback()
-    resetarTimerSumir()
-    return
+    setImg(imgs[expr] || imgs.neutra);
+    setAnim('anim-bounce');
+    setTimeout(() => setAnim('anim-float'), 500);
+    if (callback) callback();
+    resetarTimerSumir();
+    return;
   }
-  visivel = true
-  setImg(imgs.walk)
-  setAnim('')
-  container.classList.remove('saindo')
-  container.classList.add('visivel')
+  visivel = true;
+  setImg(imgs.walk);
+  setAnim('');
+  container.classList.remove('saindo');
+  container.classList.add('visivel');
+  
+  // Reduzido de 600ms para 300ms para ser mais responsivo
   setTimeout(() => {
-    setImg(imgs[expr] || imgs.neutra)
-    setAnim('anim-bounce')
+    setImg(imgs[expr] || imgs.neutra);
+    setAnim('anim-bounce');
     setTimeout(() => {
-      setAnim('anim-float')
-      if (callback) callback()
-    }, 500)
-  }, 600)
-  resetarTimerSumir()
+      setAnim('anim-float');
+      if (callback) callback();
+    }, 300); // Reduzido de 500ms
+  }, 300); 
+  resetarTimerSumir();
 }
 function sumir() {
   if (!visivel) return

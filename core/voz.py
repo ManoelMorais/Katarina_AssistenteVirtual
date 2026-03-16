@@ -3,19 +3,22 @@ import edge_tts
 import pvporcupine
 import sounddevice as sd
 import numpy as np
-import whisper
 import requests
 import struct
 import time
 import os
+import base64
+from groq import Groq
 from dotenv import load_dotenv
 from pathlib import Path
 from playsound3 import playsound
+from scipy.io.wavfile import write
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
 # ─── Config ──────────────────────────────────────────────────────
 PICOVOICE_KEY  = os.getenv("PICOVOICE_KEY", "")
+GROQ_API_KEY   = os.getenv("GROQ_API_KEY", "")
 VOICE_EDGE     = "pt-BR-FranciscaNeural"
 WAKE_WORD_PATH = "assistente_pt_windows_v4_0_0.ppn"
 MODEL_PATH     = "porcupine_params_pt.pv"
@@ -23,24 +26,15 @@ SERVIDOR_URL   = "http://localhost:8000/conversar"
 OVERLAY_URL    = "http://127.0.0.1:3000"
 SESSAO_ID      = "voz_local"
 SAMPLE_RATE    = 16000
-DURACAO_CMD    = 6
+FILE_TEMP_AUDIO = "audio_temp.wav"
+
+client = Groq(api_key=GROQ_API_KEY)
+porcupine = pvporcupine.create(access_key=PICOVOICE_KEY, keyword_paths=[WAKE_WORD_PATH], model_path=MODEL_PATH)
 
 # ─── Estado global ───────────────────────────────────────────────
 ouvindo_sempre = False
 
-# ─── Inicializa ──────────────────────────────────────────────────
-print("Carregando Whisper...")
-modelo_whisper = whisper.load_model("base")
-
-porcupine = pvporcupine.create(
-    access_key=PICOVOICE_KEY,
-    keyword_paths=[WAKE_WORD_PATH],
-    model_path=MODEL_PATH
-)
-
-print("✓ Katarina pronta")
-
-# ─── Overlay ─────────────────────────────────────────────────────
+# ─── Funções de Suporte ──────────────────────────────────────────
 def overlay(evento: str, texto: str = "", expressao: str = "falando"):
     try:
         payload = {"evento": evento}
@@ -48,26 +42,18 @@ def overlay(evento: str, texto: str = "", expressao: str = "falando"):
             payload["texto"] = texto
             payload["expressao"] = expressao
         requests.post(OVERLAY_URL, json=payload, timeout=1)
-    except Exception:
-        pass
+    except Exception: pass
 
 def detectar_expressao(texto: str) -> str:
     t = texto.lower()
-    if any(p in t for p in ["haha", "kkk", "engraçad", "brincad", "adorável"]):
-        return "feliz"
-    if any(p in t for p in ["não sei", "hmm", "deixa eu pensar", "interessante"]):
-        return "pensativa"
-    if any(p in t for p in ["erro", "problema", "falhou", "não consigo"]):
-        return "seria"
-    if any(p in t for p in ["nossa", "sério", "incrível", "que absurdo"]):
-        return "surpresa"
-    if any(p in t for p in ["claro", "óbvio", "como assim", "realmente"]):
-        return "ironica"
+    if any(p in t for p in ["haha", "kkk", "engraçado"]): return "feliz"
+    if any(p in t for p in ["não sei", "hmm", "pensar"]): return "pensativa"
     return "falando"
 
-# ─── Falar com Edge TTS ──────────────────────────────────────────
 async def _sintetizar(texto: str, caminho: str):
-    tts = edge_tts.Communicate(texto, VOICE_EDGE)
+    # O segredo do ponto para não cortar o início da fala
+    texto_preparado = " . . " + texto 
+    tts = edge_tts.Communicate(texto_preparado, VOICE_EDGE)
     await tts.save(caminho)
 
 def falar(texto: str):
@@ -77,130 +63,150 @@ def falar(texto: str):
     try:
         tmp_path = os.path.abspath("tmp_audio.mp3")
         asyncio.run(_sintetizar(texto, tmp_path))
+        time.sleep(0.2) # Delay para o overlay animar
         playsound(tmp_path)
-        os.remove(tmp_path)
-    except Exception as e:
-        print(f"Erro TTS: {e}")
-    finally:
-        overlay("idle")
+        if os.path.exists(tmp_path): os.remove(tmp_path)
+    except Exception as e: print(f"Erro TTS: {e}")
+    finally: overlay("idle")
 
-# ─── Gravar áudio ────────────────────────────────────────────────
-def gravar_audio(duracao: int) -> np.ndarray:
-    print("Ouvindo...")
+# ─── Captura Dinâmica (VAD) ──────────────────────────────────────
+def gravar_audio(duracao_maxima=8):
+    print("🎤 Ouvindo...")
     overlay("ouve")
-    audio = sd.rec(
-        int(duracao * SAMPLE_RATE),
-        samplerate=SAMPLE_RATE,
-        channels=1,
-        dtype='float32',
-        device=None
-    )
-    sd.wait()
-    return audio.flatten()
+    CHUNK_SIZE = 1024
+    THRESHOLD = 0.05 # Ajuste conforme o ruído do seu quarto
+    SILENCE_LIMIT = int(1.2 * SAMPLE_RATE / CHUNK_SIZE)
+    
+    audio_buffer = []
+    falando = False
+    frames_de_silencio = 0
 
-def audio_tem_voz(audio: np.ndarray, threshold: float = 0.03) -> bool:
-    return float(np.max(np.abs(audio))) > threshold
+    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype='float32') as stream:
+        while True:
+            chunk, _ = stream.read(CHUNK_SIZE)
+            volume_norm = np.max(np.abs(chunk))
+            
+            if volume_norm > THRESHOLD:
+                if not falando: falando = True
+                audio_buffer.append(chunk)
+                frames_de_silencio = 0
+            elif falando:
+                audio_buffer.append(chunk)
+                frames_de_silencio += 1
+                if frames_de_silencio > SILENCE_LIMIT: break
+            
+            if len(audio_buffer) > (duracao_maxima * SAMPLE_RATE / CHUNK_SIZE): break
 
-# ─── Transcrever ─────────────────────────────────────────────────
-def transcrever(audio: np.ndarray) -> str:
-    if not audio_tem_voz(audio):
-        return ""
-    resultado = modelo_whisper.transcribe(audio, language="pt")
-    return resultado["text"].strip()
+    return np.concatenate(audio_buffer).flatten() if audio_buffer else None
 
-# ─── Chamar servidor ─────────────────────────────────────────────
-def chamar_katarina(texto: str) -> str:
+# ─── Transcrição Groq ───────────────────────────────────────────
+def transcrever_audio_groq(audio_data):
+    if audio_data is None: return ""
     try:
-        resp = requests.post(SERVIDOR_URL, json={
-            "sessao_id": SESSAO_ID,
-            "texto": texto
-        }, timeout=30)
-        return resp.json().get("resposta", "")
+        write(FILE_TEMP_AUDIO, SAMPLE_RATE, audio_data)
+        with open(FILE_TEMP_AUDIO, "rb") as file:
+            transcription = client.audio.transcriptions.create(
+                file=(FILE_TEMP_AUDIO, file.read()),
+                model="whisper-large-v3-turbo",
+                response_format="text",
+                language="pt",
+                prompt="Katarina. Assistente virtual."
+            )
+        if os.path.exists(FILE_TEMP_AUDIO): os.remove(FILE_TEMP_AUDIO)
+        
+        texto = transcription.strip()
+        # Filtro de alucinação
+        lixo = ["E aí", "Oi.", "Obrigado.", "Você", "Legendas por"]
+        if texto in lixo or len(texto) <= 2: return ""
+        return texto
     except Exception as e:
-        print(f"Erro ao chamar servidor: {e}")
-        return "Tô com problema técnico, tenta de novo."
+        print(f"Erro Transcrição: {e}")
+        return ""
 
-# ─── Comandos de controle ────────────────────────────────────────
-def checar_comando_controle(texto: str) -> bool:
-    global ouvindo_sempre
-    t = texto.lower().strip()
+# ─── Fase 4: Visão ──────────────────────────────────────────────
+def ver_tela():
+    with mss.mss() as sct:
+        filename = "print.png"
+        sct.shot(output=filename)
+        return filename
 
-    if any(p in t for p in ["ligar assistente", "liga assistente", "modo contínuo", "modo continuo"]):
-        ouvindo_sempre = True
-        print("[Modo] Contínuo ATIVADO")
-        falar("Modo contínuo ativado. Pode falar à vontade.")
-        return True
-
-    if any(p in t for p in ["pausar assistente", "pausa assistente", "parar assistente", "para assistente", "desligar assistente"]):
-        ouvindo_sempre = False
-        print("[Modo] Contínuo PAUSADO")
-        falar("Pausando. Me chame quando precisar.")
-        return True
-
-    return False
-
-# ─── Loop principal ──────────────────────────────────────────────
+# ─── Loop Principal ──────────────────────────────────────────────
 def main():
     global ouvindo_sempre
-
-    print("─" * 40)
-    print("  Katarina — Modo Voz")
-    print("  Fale 'Assistente' para ativar")
-    print("  'ligar assistente' → modo contínuo")
-    print("  'pausar assistente' → volta ao normal")
-    print("  Ctrl+C para sair")
-    print("─" * 40)
-
+    print("✓ Katarina online. Fale 'Assistente'...")
+    
+    em_conversa = False 
     frame_length = porcupine.frame_length
 
-    with sd.InputStream(
-        samplerate=SAMPLE_RATE,
-        channels=1,
-        dtype='int16',
-        device=None,
-        blocksize=frame_length
-    ) as stream:
+    # Iniciamos o stream fora para não abrir/fechar toda hora (causa estalos)
+    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype='int16', blocksize=frame_length) as stream:
         while True:
             try:
-                pcm, _ = stream.read(frame_length)
-                pcm = struct.unpack_from("h" * frame_length, pcm)
-                resultado = porcupine.process(pcm)
-
-                ativou_wake_word = resultado >= 0
-
-                if ativou_wake_word or ouvindo_sempre:
-
-                    if ativou_wake_word and not ouvindo_sempre:
-                        print("\n✓ Wake word detectada!")
+                # ESTADO A: Esperando Wake Word
+                if not em_conversa and not ouvindo_sempre:
+                    pcm, _ = stream.read(frame_length)
+                    pcm = struct.unpack_from("h" * frame_length, pcm)
+                    if porcupine.process(pcm) >= 0:
+                        print("✨ Wake word detectada!")
                         falar("Oi, pode falar.")
-
-                    audio_cmd = gravar_audio(DURACAO_CMD)
-                    comando = transcrever(audio_cmd)
-
-                    if not comando or len(comando) < 3:
-                        overlay("idle")
+                        em_conversa = True # Entra no modo de diálogo
+                    else:
                         continue
 
-                    print(f"Você: {comando}")
+                # ESTADO B: Diálogo Ativo (Escuta Dinâmica)
+                print("🎤 Escuta ativa...")
+                audio_cmd = gravar_audio() # Esta função já tem o VAD que fizemos
+                
+                if audio_cmd is None:
+                    print("...silêncio detectado. Voltando para espera.")
+                    em_conversa = False
+                    overlay("idle")
+                    continue
 
-                    if checar_comando_controle(comando):
-                        continue
+                comando = transcrever_audio_groq(audio_cmd)
 
-                    resposta = chamar_katarina(comando)
+                # Se o Whisper alucinou ou o texto veio vazio
+                if not comando or len(comando.strip()) < 2:
+                    print("...comando não compreendido.")
+                    # Se não estiver no modo contínuo, encerra a conversa após 1 tentativa vazia
+                    if not ouvindo_sempre:
+                        em_conversa = False
+                    overlay("idle")
+                    continue
+
+                print(f"Você: {comando}")
+
+                # Comandos de Sistema
+                if "ligar assistente" in comando.lower():
+                    ouvindo_sempre = True
+                    falar("Modo contínuo ativado.")
+                    continue
+                elif "pausar assistente" in comando.lower():
+                    ouvindo_sempre = False
+                    em_conversa = False
+                    falar("Modo contínuo desativado.")
+                    continue
+
+                # Resposta da IA
+                try:
+                    resp_json = requests.post(SERVIDOR_URL, json={"sessao_id": SESSAO_ID, "texto": comando}, timeout=15).json()
+                    resposta = resp_json.get("resposta", "")
                     if resposta:
                         falar(resposta)
+                        # Após falar, 'em_conversa' continua True para ouvir sua réplica
+                        em_conversa = True 
                     else:
-                        overlay("idle")
+                        em_conversa = False
+                except Exception as e:
+                    print(f"Erro no servidor: {e}")
+                    falar("Houve um erro no meu cérebro agora.")
+                    em_conversa = False
 
-            except KeyboardInterrupt:
-                print("\nSaindo...")
-                break
             except Exception as e:
-                print(f"Erro: {e}")
+                print(f"Erro Crítico no Loop: {e}")
                 overlay("idle")
-                time.sleep(0.5)
-
-    porcupine.delete()
+                em_conversa = False
+                time.sleep(1) # Evita loop infinito de erro
 
 if __name__ == "__main__":
     main()
